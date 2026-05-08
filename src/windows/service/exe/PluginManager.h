@@ -45,8 +45,6 @@ public:
         _In_ DWORD ArgumentCount,
         _In_reads_opt_(ArgumentCount) LPCSTR* Arguments,
         _Out_ HANDLE* Socket) override;
-
-    STDMETHODIMP PluginError(_In_ LPCWSTR UserMessage) override;
 };
 
 /// <summary>

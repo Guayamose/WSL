@@ -56,9 +56,6 @@ interface IWslPluginHostCallback : IUnknown
         [in] DWORD ArgumentCount,
         [in, unique, size_is(ArgumentCount), string] LPCSTR* Arguments,
         [out, system_handle(sh_socket)] HANDLE* Socket);
-
-    HRESULT PluginError(
-        [in, string] LPCWSTR UserMessage);
 };
 
 //

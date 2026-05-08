@@ -126,19 +126,6 @@ try
 }
 CATCH_RETURN();
 
-STDMETHODIMP PluginHostCallbackImpl::PluginError(_In_ LPCWSTR UserMessage)
-try
-{
-    // PluginError is now handled locally in the host process.
-    // The host captures the message and returns it alongside the hook HRESULT.
-    // This callback exists only for completeness — it should not be called
-    // directly over COM since the host handles it locally.
-    RETURN_HR_IF(E_INVALIDARG, UserMessage == nullptr);
-    WSL_LOG_TELEMETRY("PluginError", PDT_ProductAndServicePerformance, TraceLoggingValue(UserMessage, "Message"));
-    return S_OK;
-}
-CATCH_RETURN();
-
 // --- PluginManager implementation ---
 
 PluginManager::~PluginManager()
@@ -276,12 +263,19 @@ void PluginManager::LoadPlugin(OutOfProcPlugin& plugin)
         plugin.path.c_str());
 
     // Add the plugin host process to our job object so it is automatically
-    // terminated if wslservice exits or crashes.
+    // terminated if wslservice exits or crashes. If this fails the host will
+    // still be reaped via CoReleaseServerProcess on clean shutdown, but won't
+    // be killed on a service crash — surface the failure so it's diagnosable.
     EnsureJobObjectCreated();
     wil::unique_handle process;
-    if (SUCCEEDED(host->GetProcessHandle(&process)))
+    const HRESULT getProcessHr = host->GetProcessHandle(&process);
+    LOG_IF_FAILED_MSG(getProcessHr, "Failed to get plugin host process handle for: '%ls'", plugin.path.c_str());
+    if (SUCCEEDED(getProcessHr))
     {
-        LOG_IF_WIN32_BOOL_FALSE(AssignProcessToJobObject(m_jobObject.get(), process.get()));
+        LOG_IF_WIN32_BOOL_FALSE_MSG(
+            AssignProcessToJobObject(m_jobObject.get(), process.get()),
+            "Failed to assign plugin host to job object for: '%ls'",
+            plugin.path.c_str());
     }
 
     plugin.host = std::move(host);
