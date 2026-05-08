@@ -2878,7 +2878,13 @@ void LxssUserSessionImpl::_CreateVm()
         m_vmId.store(vmId);
 
         // Create the utility VM and register for callbacks.
-        m_utilityVm = WslCoreVm::Create(m_userToken, std::move(config), vmId);
+        // Publish m_utilityVm under m_callbackLock exclusive to honor the dual-lock
+        // invariant for mutations of m_utilityVm; this is uncontended here because
+        // no plugin callbacks can race against initial creation.
+        {
+            std::unique_lock callbackLock(m_callbackLock);
+            m_utilityVm = WslCoreVm::Create(m_userToken, std::move(config), vmId);
+        }
 
         if (m_httpProxyStateTracker)
         {

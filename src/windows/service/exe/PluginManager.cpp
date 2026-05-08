@@ -207,10 +207,13 @@ void PluginManager::EnsureInitialized()
 
             if (FAILED(loadResult))
             {
-                // Only treat plugin-reported errors (from entry point) as fatal.
-                // COM infrastructure errors (activation, connectivity) are non-fatal
-                // — the plugin is simply unavailable.
-                if (IsHostCrash(loadResult) || loadResult == CO_E_SERVER_EXEC_FAILURE)
+                // Treat host-process crashes and benign COM activation races (server is
+                // shutting down or its exec failed) as non-fatal — the plugin is simply
+                // unavailable for this session. All other failures, including registration
+                // errors (REGDB_E_CLASSNOTREG), access denials, and plugin-reported errors
+                // from Initialize, are treated as fatal plugin load failures so the user
+                // gets a clear error rather than a silently-disabled plugin.
+                if (IsHostCrash(loadResult) || loadResult == CO_E_SERVER_EXEC_FAILURE || loadResult == CO_E_SERVER_STOPPING)
                 {
                     LOG_HR_MSG(loadResult, "Plugin host activation failed for: '%ls', skipping", e.name.c_str());
                 }
