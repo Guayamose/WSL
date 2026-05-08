@@ -188,27 +188,38 @@ void PluginManager::LoadPlugins()
     }
 }
 
-void PluginManager::EnsureInitialized()
+PluginManager::ScopedComInit::ScopedComInit() : initHr(::CoInitializeEx(nullptr, COINIT_MULTITHREADED))
 {
-    std::call_once(m_initOnce, [this]() {
-        // CoCreateInstance below requires the calling thread to be COM-initialized.
-        // In practice the first caller is OnVmStarted on a COM RPC dispatch thread,
-        // but explicitly joining the MTA here makes this independent of caller context
-        // so a future change in invocation order can't silently break plugin loading.
-        // RPC_E_CHANGED_MODE means the thread is already STA — proxy calls still work
-        // via apartment marshaling.
-        const HRESULT comInitHr = ::CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-        auto coUninit = wil::scope_exit([comInitHr]() {
-            if (SUCCEEDED(comInitHr))
-            {
-                ::CoUninitialize();
-            }
-        });
-        if (FAILED(comInitHr) && comInitHr != RPC_E_CHANGED_MODE)
-        {
-            THROW_HR(comInitHr);
-        }
+}
 
+PluginManager::ScopedComInit::~ScopedComInit()
+{
+    if (SUCCEEDED(initHr))
+    {
+        ::CoUninitialize();
+    }
+}
+
+PluginManager::ScopedComInit::ScopedComInit(ScopedComInit&& other) noexcept : initHr(other.initHr)
+{
+    // Suppress uninit in moved-from instance.
+    other.initHr = RPC_E_CHANGED_MODE;
+}
+
+HRESULT PluginManager::ScopedComInit::Result() const noexcept
+{
+    return (initHr == RPC_E_CHANGED_MODE) ? S_OK : initHr;
+}
+
+PluginManager::ScopedComInit PluginManager::EnsureInitialized()
+{
+    // Join the calling thread to the MTA for the duration of the dispatch. The
+    // returned guard must outlive any subsequent e.host->Method(...) calls because
+    // those are cross-process COM calls that require an initialized apartment.
+    ScopedComInit coInit;
+    THROW_IF_FAILED(coInit.Result());
+
+    std::call_once(m_initOnce, [this]() {
         m_callback = Microsoft::WRL::Make<PluginHostCallbackImpl>();
         THROW_IF_NULL_ALLOC(m_callback);
 
@@ -297,7 +308,7 @@ std::vector<BYTE> PluginManager::SerializeSid(PSID Sid)
 void PluginManager::OnVmStarted(const WSLSessionInformation* Session, const WSLVmCreationSettings* Settings)
 {
     ExecutionContext context(Context::Plugin);
-    EnsureInitialized();
+    auto coInit = EnsureInitialized();
 
     auto sidData = SerializeSid(Session->UserSid);
 
@@ -327,7 +338,7 @@ void PluginManager::OnVmStarted(const WSLSessionInformation* Session, const WSLV
 void PluginManager::OnVmStopping(const WSLSessionInformation* Session)
 {
     ExecutionContext context(Context::Plugin);
-    EnsureInitialized();
+    auto coInit = EnsureInitialized();
 
     auto sidData = SerializeSid(Session->UserSid);
 
@@ -355,7 +366,7 @@ void PluginManager::OnVmStopping(const WSLSessionInformation* Session)
 void PluginManager::OnDistributionStarted(const WSLSessionInformation* Session, const WSLDistributionInformation* Distribution)
 {
     ExecutionContext context(Context::Plugin);
-    EnsureInitialized();
+    auto coInit = EnsureInitialized();
 
     auto sidData = SerializeSid(Session->UserSid);
 
@@ -393,7 +404,7 @@ void PluginManager::OnDistributionStarted(const WSLSessionInformation* Session, 
 void PluginManager::OnDistributionStopping(const WSLSessionInformation* Session, const WSLDistributionInformation* Distribution)
 {
     ExecutionContext context(Context::Plugin);
-    EnsureInitialized();
+    auto coInit = EnsureInitialized();
 
     auto sidData = SerializeSid(Session->UserSid);
 
@@ -435,7 +446,7 @@ void PluginManager::OnDistributionStopping(const WSLSessionInformation* Session,
 void PluginManager::OnDistributionRegistered(const WSLSessionInformation* Session, const WslOfflineDistributionInformation* Distribution)
 {
     ExecutionContext context(Context::Plugin);
-    EnsureInitialized();
+    auto coInit = EnsureInitialized();
 
     auto sidData = SerializeSid(Session->UserSid);
 
@@ -475,7 +486,7 @@ void PluginManager::OnDistributionRegistered(const WSLSessionInformation* Sessio
 void PluginManager::OnDistributionUnregistered(const WSLSessionInformation* Session, const WslOfflineDistributionInformation* Distribution)
 {
     ExecutionContext context(Context::Plugin);
-    EnsureInitialized();
+    auto coInit = EnsureInitialized();
 
     auto sidData = SerializeSid(Session->UserSid);
 
@@ -559,7 +570,7 @@ bool PluginManager::IsHostCrash(HRESULT hr)
 void PluginManager::ThrowIfFatalPluginError()
 {
     ExecutionContext context(Context::Plugin);
-    EnsureInitialized();
+    auto coInit = EnsureInitialized();
 
     if (!m_pluginError.has_value())
     {

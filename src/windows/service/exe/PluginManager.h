@@ -90,8 +90,29 @@ private:
         std::wstring path;
     };
 
+    // RAII helper that joins the calling thread to the MTA for the duration of the
+    // scope. Plugin host activation and per-call dispatch through e.host->Method(...)
+    // are both cross-process COM calls that require the calling thread to be COM-init'd,
+    // and hook dispatch can run on threadpool threads (e.g. _VmIdleTerminate path) that
+    // haven't called CoInitializeEx. RPC_E_CHANGED_MODE means the thread is already
+    // STA-initialized — that's still fine, COM transparently marshals proxy calls
+    // across apartments.
+    struct ScopedComInit
+    {
+        HRESULT initHr{RPC_E_CHANGED_MODE};
+
+        ScopedComInit();
+        ~ScopedComInit();
+        ScopedComInit(const ScopedComInit&) = delete;
+        ScopedComInit& operator=(const ScopedComInit&) = delete;
+        ScopedComInit(ScopedComInit&& other) noexcept;
+        ScopedComInit& operator=(ScopedComInit&&) = delete;
+
+        HRESULT Result() const noexcept;
+    };
+
     void LoadPlugin(OutOfProcPlugin& plugin);
-    void EnsureInitialized();
+    [[nodiscard]] ScopedComInit EnsureInitialized();
     void EnsureJobObjectCreated();
     static void ThrowIfPluginError(HRESULT Result, LPWSTR ErrorMessage, WSLSessionId session, LPCWSTR Plugin);
     static std::vector<BYTE> SerializeSid(PSID Sid);
