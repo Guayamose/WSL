@@ -86,6 +86,11 @@ try
     WslTraceLoggingInitialize(WslServiceTelemetryProvider, !wsl::shared::OfficialBuild);
     auto cleanupTracing = wil::scope_exit_log(WI_DIAGNOSTICS_INFO, [] { WslTraceLoggingUninitialize(); });
 
+    // Harden the process before loading any third-party plugin code. Match the
+    // mitigation set applied by the other WSL COM server processes
+    // (wslservice.exe / wslcsession.exe).
+    wsl::windows::common::security::ApplyProcessMitigationPolicies();
+
     auto coInit = wil::CoInitializeEx(COINIT_MULTITHREADED);
     wsl::windows::common::wslutil::CoInitializeSecurity();
 
@@ -109,4 +114,8 @@ try
 
     return 0;
 }
-CATCH_RETURN();
+catch (...)
+{
+    LOG_CAUGHT_EXCEPTION();
+    return 1;
+}
