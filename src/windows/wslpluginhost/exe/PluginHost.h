@@ -113,7 +113,6 @@ private:
     static HRESULT CALLBACK LocalExecuteBinaryInDistribution(WSLSessionId Session, const GUID* Distro, LPCSTR Path, LPCSTR* Arguments, SOCKET* Socket);
 
     wil::unique_hmodule m_module;
-    std::wstring m_pluginName;
     WSLPluginHooksV1 m_hooks{};
     Microsoft::WRL::ComPtr<IWslPluginHostCallback> m_callback;
 
@@ -128,7 +127,8 @@ private:
 // Process-wide pointer to the single PluginHost instance. Safe because
 // REGCLS_SINGLEUSE guarantees one PluginHost per wslpluginhost.exe process.
 // This allows plugin DLLs to call API functions from any thread, not just
-// the thread dispatching the current hook.
-extern PluginHost* g_pluginHost;
+// the thread dispatching the current hook. Atomic so concurrent stub calls
+// from plugin worker threads observe a coherent value during ctor/dtor.
+extern std::atomic<PluginHost*> g_pluginHost;
 
 } // namespace wsl::windows::pluginhost

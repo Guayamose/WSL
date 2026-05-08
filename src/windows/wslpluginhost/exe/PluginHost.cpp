@@ -25,7 +25,7 @@ using namespace wsl::windows::pluginhost;
 extern void AddComRef();
 extern void ReleaseComRef();
 
-PluginHost* wsl::windows::pluginhost::g_pluginHost = nullptr;
+std::atomic<wsl::windows::pluginhost::PluginHost*> wsl::windows::pluginhost::g_pluginHost{nullptr};
 
 // Thread ID of the thread currently dispatching a plugin hook.
 // Only that thread may call PluginError. Using thread ID instead of
@@ -77,11 +77,10 @@ PluginHost::PluginHost()
 PluginHost::~PluginHost()
 {
     // Clear globally reachable state so late plugin API calls fail with
-    // E_UNEXPECTED instead of dereferencing freed memory.
-    if (g_pluginHost == this)
-    {
-        g_pluginHost = nullptr;
-    }
+    // E_UNEXPECTED instead of dereferencing freed memory. Release-store
+    // pairs with the acquire-loads in the Local* API stubs.
+    PluginHost* expected = this;
+    g_pluginHost.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel);
 
     // Module unloads automatically via wil::unique_hmodule destructor.
 
@@ -99,7 +98,6 @@ try
     RETURN_HR_IF(E_ILLEGAL_METHOD_CALL, m_module.is_valid()); // Already initialized
 
     m_callback = Callback;
-    m_pluginName = PluginName;
 
     // Validate the plugin signature before loading it.
     // Keep the file handle open to prevent TOCTOU (swap between validation and load).
@@ -126,12 +124,15 @@ try
         &LocalPluginError,
         &LocalExecuteBinaryInDistribution};
 
-    g_pluginHost = this;
+    // Publish g_pluginHost with release semantics so an acquire-load in a stub
+    // observes a fully-constructed m_callback / m_hooks. Only publish on success
+    // so a failed entry point never leaves a dangling pointer for late stub calls.
+    g_pluginHost.store(this, std::memory_order_release);
     HRESULT hr = entryPoint(&api, &m_hooks);
 
     if (FAILED(hr))
     {
-        g_pluginHost = nullptr;
+        g_pluginHost.store(nullptr, std::memory_order_release);
         RETURN_HR_MSG(hr, "Plugin entry point failed: '%ls'", PluginPath);
     }
 
@@ -399,7 +400,8 @@ PluginHost::SessionContext PluginHost::BuildSessionContext(DWORD SessionId, HAND
 
 HRESULT CALLBACK PluginHost::LocalMountFolder(WSLSessionId Session, LPCWSTR WindowsPath, LPCWSTR LinuxPath, BOOL ReadOnly, LPCWSTR Name)
 {
-    if (g_pluginHost == nullptr || g_pluginHost->m_callback == nullptr)
+    auto* host = g_pluginHost.load(std::memory_order_acquire);
+    if (host == nullptr || host->m_callback == nullptr)
     {
         return E_UNEXPECTED;
     }
@@ -407,13 +409,14 @@ HRESULT CALLBACK PluginHost::LocalMountFolder(WSLSessionId Session, LPCWSTR Wind
     ScopedComInitForCallback coInit;
     RETURN_IF_FAILED(coInit.Result());
 
-    auto hr = g_pluginHost->m_callback->MountFolder(Session, WindowsPath, LinuxPath, ReadOnly, Name);
+    auto hr = host->m_callback->MountFolder(Session, WindowsPath, LinuxPath, ReadOnly, Name);
     return hr;
 }
 
 HRESULT CALLBACK PluginHost::LocalExecuteBinary(WSLSessionId Session, LPCSTR Path, LPCSTR* Arguments, SOCKET* Socket)
 {
-    if (g_pluginHost == nullptr || g_pluginHost->m_callback == nullptr)
+    auto* host = g_pluginHost.load(std::memory_order_acquire);
+    if (host == nullptr || host->m_callback == nullptr)
     {
         return E_UNEXPECTED;
     }
@@ -434,7 +437,7 @@ HRESULT CALLBACK PluginHost::LocalExecuteBinary(WSLSessionId Session, LPCSTR Pat
     }
 
     HANDLE socketResult = nullptr;
-    HRESULT hr = g_pluginHost->m_callback->ExecuteBinary(Session, Path, count, Arguments, &socketResult);
+    HRESULT hr = host->m_callback->ExecuteBinary(Session, Path, count, Arguments, &socketResult);
 
     if (SUCCEEDED(hr))
     {
@@ -454,7 +457,8 @@ HRESULT CALLBACK PluginHost::LocalExecuteBinary(WSLSessionId Session, LPCSTR Pat
 
 HRESULT CALLBACK PluginHost::LocalPluginError(LPCWSTR UserMessage)
 {
-    if (g_pluginHost == nullptr)
+    auto* host = g_pluginHost.load(std::memory_order_acquire);
+    if (host == nullptr)
     {
         // Not on a hook thread — PluginError must only be called
         // synchronously from within OnVMStarted/OnDistributionStarted.
@@ -463,16 +467,17 @@ HRESULT CALLBACK PluginHost::LocalPluginError(LPCWSTR UserMessage)
 
     RETURN_HR_IF(E_INVALIDARG, UserMessage == nullptr);
     RETURN_HR_IF(E_ILLEGAL_METHOD_CALL, GetCurrentThreadId() != g_hookThreadId.load());
-    RETURN_HR_IF(E_ILLEGAL_STATE_CHANGE, g_pluginHost->m_pluginErrorMessage.has_value());
+    RETURN_HR_IF(E_ILLEGAL_STATE_CHANGE, host->m_pluginErrorMessage.has_value());
 
     // Store locally — returned to service alongside the hook HRESULT.
-    g_pluginHost->m_pluginErrorMessage.emplace(UserMessage);
+    host->m_pluginErrorMessage.emplace(UserMessage);
     return S_OK;
 }
 
 HRESULT CALLBACK PluginHost::LocalExecuteBinaryInDistribution(WSLSessionId Session, const GUID* Distro, LPCSTR Path, LPCSTR* Arguments, SOCKET* Socket)
 {
-    if (g_pluginHost == nullptr || g_pluginHost->m_callback == nullptr)
+    auto* host = g_pluginHost.load(std::memory_order_acquire);
+    if (host == nullptr || host->m_callback == nullptr)
     {
         return E_UNEXPECTED;
     }
@@ -493,7 +498,7 @@ HRESULT CALLBACK PluginHost::LocalExecuteBinaryInDistribution(WSLSessionId Sessi
     }
 
     HANDLE socketResult = nullptr;
-    HRESULT hr = g_pluginHost->m_callback->ExecuteBinaryInDistribution(Session, Distro, Path, count, Arguments, &socketResult);
+    HRESULT hr = host->m_callback->ExecuteBinaryInDistribution(Session, Distro, Path, count, Arguments, &socketResult);
 
     if (SUCCEEDED(hr))
     {

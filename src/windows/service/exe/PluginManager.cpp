@@ -55,6 +55,7 @@ try
 {
     RETURN_HR_IF(E_POINTER, Socket == nullptr);
     *Socket = nullptr;
+    RETURN_HR_IF(E_INVALIDARG, ArgumentCount > 0 && Arguments == nullptr);
 
     WSL_LOG("PluginCallbackExecuteBinaryBegin", TraceLoggingValue(Path, "Path"), TraceLoggingValue(SessionId, "SessionId"));
     const auto session = FindSessionByCookie(SessionId);
@@ -101,6 +102,7 @@ try
     RETURN_HR_IF(E_POINTER, Socket == nullptr);
     *Socket = nullptr;
     RETURN_HR_IF(E_INVALIDARG, DistributionId == nullptr);
+    RETURN_HR_IF(E_INVALIDARG, ArgumentCount > 0 && Arguments == nullptr);
 
     const auto session = FindSessionByCookie(SessionId);
     RETURN_HR_IF(RPC_E_DISCONNECTED, !session);

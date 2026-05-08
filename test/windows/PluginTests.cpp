@@ -335,9 +335,13 @@ class PluginTests
     WSL1_TEST_METHOD(SuccessWSL1)
     {
         // Plugins are not loaded for WSL1-only sessions (no VM, no plugin hooks).
-        // Verify that WSL1 works without plugins.
+        // Verify the plugin log file is absent/empty to assert no plugin code ran.
         ConfigurePlugin(PluginTestType::Success);
         StartWsl(0);
+
+        VERIFY_IS_TRUE(
+            !std::filesystem::exists(logFile) || (std::filesystem::file_size(logFile) == 0),
+            std::format(L"Expected plugin log file '{}' to be absent or empty for WSL1", logFile).c_str());
     }
 
     WSL2_TEST_METHOD(LoadFailureFatalWSL2)
@@ -357,9 +361,14 @@ class PluginTests
     WSL1_TEST_METHOD(LoadFailureNonFatalWSL1)
     {
         // Plugins are not loaded for WSL1-only sessions, so a plugin that
-        // would fail to load on WSL2 has no effect on WSL1.
+        // would fail to load on WSL2 has no effect on WSL1. Assert the plugin
+        // log file is absent/empty to confirm no plugin code ran.
         ConfigurePlugin(PluginTestType::FailToLoad);
         StartWsl(0);
+
+        VERIFY_IS_TRUE(
+            !std::filesystem::exists(logFile) || (std::filesystem::file_size(logFile) == 0),
+            std::format(L"Expected plugin log file '{}' to be absent or empty for WSL1", logFile).c_str());
     }
 
     WSL2_TEST_METHOD(VmStartFailure)
