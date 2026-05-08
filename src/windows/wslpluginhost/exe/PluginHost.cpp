@@ -22,6 +22,7 @@ Abstract:
 using namespace wsl::windows::pluginhost;
 
 // Defined in main.cpp — part of the COM local server lifecycle.
+extern void AddComRef();
 extern void ReleaseComRef();
 
 PluginHost* wsl::windows::pluginhost::g_pluginHost = nullptr;
@@ -64,6 +65,15 @@ struct ScopedComInitForCallback
 
 } // namespace
 
+PluginHost::PluginHost()
+{
+    // Increment the COM server reference count so the process stays alive while
+    // this instance exists. Pairs with ReleaseComRef() in ~PluginHost(); tying
+    // both to the object's lifetime guarantees they always balance regardless of
+    // whether the factory's CopyTo() succeeds or fails.
+    AddComRef();
+}
+
 PluginHost::~PluginHost()
 {
     // Clear globally reachable state so late plugin API calls fail with
@@ -76,7 +86,7 @@ PluginHost::~PluginHost()
     // Module unloads automatically via wil::unique_hmodule destructor.
 
     // Decrement the COM server reference count. When it reaches zero,
-    // the process will exit. Matches AddComRef() in PluginHostFactory::CreateInstance.
+    // the process will exit. Matches AddComRef() in PluginHost::PluginHost().
     ReleaseComRef();
 }
 

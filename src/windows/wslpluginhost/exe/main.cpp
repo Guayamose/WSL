@@ -53,10 +53,11 @@ public:
         auto host = Make<wsl::windows::pluginhost::PluginHost>();
         RETURN_IF_NULL_ALLOC(host);
 
-        AddComRef();
-        auto releaseOnFailure = wil::scope_exit([] { ReleaseComRef(); });
+        // The PluginHost ctor/dtor pair manages the process keep-alive ref;
+        // no manual AddComRef/ReleaseComRef needed here. If CopyTo fails, the
+        // local ComPtr destructor releases the only reference, which destroys
+        // the PluginHost and decrements the keep-alive count.
         RETURN_IF_FAILED(host.CopyTo(riid, ppCreated));
-        releaseOnFailure.release();
         return S_OK;
     }
     CATCH_RETURN();

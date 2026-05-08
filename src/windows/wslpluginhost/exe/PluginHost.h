@@ -24,7 +24,7 @@ namespace wsl::windows::pluginhost {
 class PluginHost : public Microsoft::WRL::RuntimeClass<Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>, IWslPluginHost>
 {
 public:
-    PluginHost() = default;
+    PluginHost();
     ~PluginHost();
 
     PluginHost(const PluginHost&) = delete;

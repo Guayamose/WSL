@@ -560,7 +560,6 @@ bool PluginManager::IsHostCrash(HRESULT hr)
     case RPC_E_SERVER_DIED:
     case RPC_E_SERVER_DIED_DNE:
     case CO_E_OBJNOTCONNECTED:
-    case RPC_S_SERVER_UNAVAILABLE:
     case HRESULT_FROM_WIN32(RPC_S_SERVER_UNAVAILABLE):
     case RPC_E_CALL_REJECTED:
         return true;
