@@ -253,6 +253,8 @@ PluginManager::ScopedComInit PluginManager::EnsureInitialized()
             }
         }
     });
+
+    return coInit;
 }
 
 void PluginManager::LoadPlugin(OutOfProcPlugin& plugin)
