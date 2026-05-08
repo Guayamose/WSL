@@ -191,6 +191,24 @@ void PluginManager::LoadPlugins()
 void PluginManager::EnsureInitialized()
 {
     std::call_once(m_initOnce, [this]() {
+        // CoCreateInstance below requires the calling thread to be COM-initialized.
+        // In practice the first caller is OnVmStarted on a COM RPC dispatch thread,
+        // but explicitly joining the MTA here makes this independent of caller context
+        // so a future change in invocation order can't silently break plugin loading.
+        // RPC_E_CHANGED_MODE means the thread is already STA — proxy calls still work
+        // via apartment marshaling.
+        const HRESULT comInitHr = ::CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        auto coUninit = wil::scope_exit([comInitHr]() {
+            if (SUCCEEDED(comInitHr))
+            {
+                ::CoUninitialize();
+            }
+        });
+        if (FAILED(comInitHr) && comInitHr != RPC_E_CHANGED_MODE)
+        {
+            THROW_HR(comInitHr);
+        }
+
         m_callback = Microsoft::WRL::Make<PluginHostCallbackImpl>();
         THROW_IF_NULL_ALLOC(m_callback);
 

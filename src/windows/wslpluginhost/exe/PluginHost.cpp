@@ -31,6 +31,39 @@ PluginHost* wsl::windows::pluginhost::g_pluginHost = nullptr;
 // thread_local to avoid TLS initialization issues across DLL/EXE boundaries.
 static std::atomic<DWORD> g_hookThreadId{0};
 
+namespace {
+
+// Plugins may invoke API stubs from worker threads they create themselves,
+// which often haven't called CoInitializeEx. Without COM initialization, the
+// cross-process m_callback proxy can't be used and calls would fail with
+// CO_E_NOTINITIALIZED. This RAII helper joins the calling thread to the MTA
+// for the duration of the API call. RPC_E_CHANGED_MODE means the thread is
+// already STA-initialized — that's still fine, COM transparently marshals
+// proxy calls across apartments.
+struct ScopedComInitForCallback
+{
+    HRESULT initHr;
+    ScopedComInitForCallback() : initHr(::CoInitializeEx(nullptr, COINIT_MULTITHREADED))
+    {
+    }
+    ~ScopedComInitForCallback()
+    {
+        if (SUCCEEDED(initHr))
+        {
+            ::CoUninitialize();
+        }
+    }
+    ScopedComInitForCallback(const ScopedComInitForCallback&) = delete;
+    ScopedComInitForCallback& operator=(const ScopedComInitForCallback&) = delete;
+
+    HRESULT Result() const
+    {
+        return (initHr == RPC_E_CHANGED_MODE) ? S_OK : initHr;
+    }
+};
+
+} // namespace
+
 PluginHost::~PluginHost()
 {
     // Clear globally reachable state so late plugin API calls fail with
@@ -361,6 +394,9 @@ HRESULT CALLBACK PluginHost::LocalMountFolder(WSLSessionId Session, LPCWSTR Wind
         return E_UNEXPECTED;
     }
 
+    ScopedComInitForCallback coInit;
+    RETURN_IF_FAILED(coInit.Result());
+
     auto hr = g_pluginHost->m_callback->MountFolder(Session, WindowsPath, LinuxPath, ReadOnly, Name);
     return hr;
 }
@@ -373,6 +409,9 @@ HRESULT CALLBACK PluginHost::LocalExecuteBinary(WSLSessionId Session, LPCSTR Pat
     }
 
     RETURN_HR_IF(E_POINTER, Socket == nullptr);
+
+    ScopedComInitForCallback coInit;
+    RETURN_IF_FAILED(coInit.Result());
 
     // Count arguments (NULL-terminated array)
     DWORD count = 0;
@@ -430,6 +469,9 @@ HRESULT CALLBACK PluginHost::LocalExecuteBinaryInDistribution(WSLSessionId Sessi
 
     RETURN_HR_IF(E_INVALIDARG, Distro == nullptr);
     RETURN_HR_IF(E_POINTER, Socket == nullptr);
+
+    ScopedComInitForCallback coInit;
+    RETURN_IF_FAILED(coInit.Result());
 
     DWORD count = 0;
     if (Arguments != nullptr)
